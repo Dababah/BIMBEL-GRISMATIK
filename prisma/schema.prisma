@@ -272,7 +272,7 @@ model PromoConfig {
 }
 
 // =========================================================
-// CMS & KONTEN LANDING PAGE (tidak berubah dari versi sebelumnya)
+// CMS & KONTEN LANDING PAGE
 // =========================================================
 
 model Program {
@@ -306,7 +306,7 @@ model Testimonial {
 model GalleryItem {
   id        Int      @id @default(autoincrement())
   title     String?
-  imageUrl  String
+  imageUrl  String   @db.Text // <-- SUDAH DIPERBAIKI: Menggunakan @db.Text untuk menampung data gambar Base64 dari HP
   order     Int      @default(0)
   createdAt DateTime @default(now())
 }
