@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: grismatik_local_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: grismatik
+      POSTGRES_PASSWORD: grismatik
+      POSTGRES_DB: grismatik
+    ports:
+      - "5432:5432"
+    volumes:
+      - grismatik_db_data:/var/lib/postgresql/data
+
+volumes:
+  grismatik_db_data:

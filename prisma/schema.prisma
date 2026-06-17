@@ -1,0 +1,331 @@
+// Prisma Schema - Bimbel Grismatik
+// Gabungan: Landing Page CMS + Sistem Manajemen Akademik (Admin/Tutor/Ortu)
+// Database: PostgreSQL via Neon (Serverless)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+// =========================================================
+// ENUM
+// =========================================================
+
+enum Role {
+  SUPER_ADMIN
+  TUTOR
+  PARENT
+}
+
+enum StudentLevel {
+  CALISTUNG
+  SD
+  SMP
+  SMA
+}
+
+enum EnrollmentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AttendanceStatus {
+  HADIR
+  IZIN
+  SAKIT
+  ALFA
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PENDING_VERIFICATION
+  PAID
+}
+
+// Status untuk lead/calon siswa dari form pendaftaran publik (landing page)
+enum RegistrationStatus {
+  BARU
+  DIHUBUNGI
+  TERDAFTAR
+  DITOLAK
+}
+
+// =========================================================
+// USER & AUTENTIKASI (Super Admin, Tutor, Orang Tua)
+// =========================================================
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  name      String
+  email     String?  @unique
+  password  String // disimpan dalam bentuk hash (bcrypt)
+  role      Role     @default(PARENT)
+  phone     String?
+  address   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relasi jika role = PARENT
+  studentsAsParent Student[] @relation("ParentToStudent")
+
+  // Relasi jika role = TUTOR
+  schedulesAsTutor Schedule[]     @relation("TutorSchedules")
+  journals         Journal[]
+  reportPeriods    ReportPeriod[] @relation("TutorReportPeriods")
+
+  @@map("users")
+}
+
+// =========================================================
+// SISWA
+// =========================================================
+
+model Student {
+  id          String       @id @default(uuid())
+  studentCode String       @unique // Contoh: GSM-SD-0001
+  name        String
+  birthDate   DateTime?
+  level       StudentLevel
+  hasNgaji    Boolean      @default(false) // tambahan paket Les Ngaji
+  parentId    String
+  parent      User         @relation("ParentToStudent", fields: [parentId], references: [id], onDelete: Cascade)
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  enrollments   Enrollment[]
+  attendances   Attendance[]
+  invoices      Invoice[]
+  reportPeriods ReportPeriod[]
+
+  @@map("students")
+}
+
+// =========================================================
+// JADWAL KELAS (terhubung ke Program yang ada di landing page)
+// =========================================================
+
+model Schedule {
+  id          String   @id @default(uuid())
+  name        String // Contoh: "Kelompok A - Senin & Rabu"
+  programId   Int
+  program     Program  @relation(fields: [programId], references: [id])
+  tutorId     String?
+  tutor       User?    @relation("TutorSchedules", fields: [tutorId], references: [id])
+  dayOfWeek   Int[] // 0=Minggu, 1=Senin, ... 6=Sabtu
+  startTime   String // "16:00"
+  endTime     String // "17:30"
+  maxCapacity Int      @default(15)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  enrollments Enrollment[]
+  journals    Journal[]
+  attendances Attendance[]
+
+  @@map("schedules")
+}
+
+// Penempatan siswa ke jadwal tertentu
+model Enrollment {
+  id          String           @id @default(uuid())
+  studentId   String
+  student     Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  scheduleId  String
+  schedule    Schedule         @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  status      EnrollmentStatus @default(PENDING)
+  notes       String?
+  submittedAt DateTime         @default(now())
+  reviewedAt  DateTime?
+  reviewedBy  String?
+
+  @@unique([studentId, scheduleId])
+  @@map("enrollments")
+}
+
+// =========================================================
+// JURNAL KELAS (diisi Tutor setiap pertemuan)
+// =========================================================
+
+model Journal {
+  id         String   @id @default(uuid())
+  tutorId    String
+  tutor      User     @relation(fields: [tutorId], references: [id])
+  scheduleId String
+  schedule   Schedule @relation(fields: [scheduleId], references: [id])
+  date       DateTime @default(now())
+  material   String // materi yang diajarkan hari itu
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  attendances Attendance[]
+
+  @@map("journals")
+}
+
+// =========================================================
+// KEHADIRAN
+// =========================================================
+
+model Attendance {
+  id         String           @id @default(uuid())
+  studentId  String
+  student    Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  scheduleId String
+  schedule   Schedule         @relation(fields: [scheduleId], references: [id])
+  journalId  String?
+  journal    Journal?         @relation(fields: [journalId], references: [id])
+  date       DateTime
+  status     AttendanceStatus @default(HADIR)
+  notes      String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@unique([studentId, scheduleId, date])
+  @@map("attendances")
+}
+
+// =========================================================
+// KEUANGAN / INVOICE
+// =========================================================
+
+model Invoice {
+  id              String        @id @default(uuid())
+  studentId       String
+  student         Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  month           Int // 1-12
+  year            Int
+  registrationFee Int           @default(0)
+  monthlyFee      Int           @default(0)
+  ngajiFee        Int           @default(0)
+  discountAmount  Int           @default(0)
+  totalAmount     Int
+  status          InvoiceStatus @default(UNPAID)
+  proofUrl        String? // tautan bukti transfer (ditempel orang tua)
+  submittedAt     DateTime?
+  verifiedAt      DateTime?
+  verifiedBy      String?
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([studentId, month, year])
+  @@map("invoices")
+}
+
+// =========================================================
+// RAPOR (Key-Value dinamis, fleksibel untuk semua jenjang)
+// =========================================================
+
+model ReportPeriod {
+  id          String   @id @default(uuid())
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  tutorId     String?
+  tutor       User?    @relation("TutorReportPeriods", fields: [tutorId], references: [id])
+  periodName  String // Contoh: "Juni 2026"
+  pdfUrl      String? // tautan PDF rapor jika diunggah ke layanan eksternal
+  isPublished Boolean  @default(false) // tampil ke orang tua jika true
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  details ReportDetail[]
+
+  @@unique([studentId, periodName])
+  @@map("report_periods")
+}
+
+model ReportDetail {
+  id             String       @id @default(uuid())
+  reportPeriodId String
+  reportPeriod   ReportPeriod @relation(fields: [reportPeriodId], references: [id], onDelete: Cascade)
+  metricKey      String // Contoh: "Pengenalan Huruf", "Quick Math Tricks", "Hafalan Surat"
+  metricValue    String // Contoh: "Lancar", "88", "Al-Ikhlas"
+  category       String       @default("AKADEMIK") // AKADEMIK | NGAJI | KARAKTER
+
+  @@map("report_details")
+}
+
+// =========================================================
+// PROMO / DISKON
+// =========================================================
+
+model PromoConfig {
+  id            String   @id @default(uuid())
+  name          String // Contoh: "Promo Gratis Pendaftaran Juni 2026"
+  discountType  String // "REGISTRATION_FREE" | "PERCENTAGE" | "NOMINAL"
+  discountValue Int      @default(0)
+  startDate     DateTime
+  endDate       DateTime
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  @@map("promo_configs")
+}
+
+// =========================================================
+// CMS & KONTEN LANDING PAGE (tidak berubah dari versi sebelumnya)
+// =========================================================
+
+model Program {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String
+  level       String?
+  schedule    String?
+  price       String?
+  imageUrl    String?
+  order       Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  schedules Schedule[]
+}
+
+model Testimonial {
+  id        Int      @id @default(autoincrement())
+  name      String
+  role      String?
+  message   String
+  rating    Int      @default(5)
+  imageUrl  String?
+  order     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model GalleryItem {
+  id        Int      @id @default(autoincrement())
+  title     String?
+  imageUrl  String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+// Form pendaftaran publik di landing page (lead/calon siswa)
+model Registration {
+  id              Int                @id @default(autoincrement())
+  name            String
+  email           String?
+  phone           String
+  studentClass    String?
+  programInterest String?
+  message         String?
+  status          RegistrationStatus @default(BARU)
+  createdAt       DateTime           @default(now())
+}
+
+model Setting {
+  id    Int    @id @default(autoincrement())
+  key   String @unique
+  value String @db.Text
+}
